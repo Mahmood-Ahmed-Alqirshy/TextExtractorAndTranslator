@@ -20,11 +20,11 @@ namespace TextExtractorAndTranslator
 
         public class GoogleTranslateWebsite : WebBrowser
         {
-            private string theWord = "";
+            public string theWord { get; private set; } = "";
 
             private bool isloadSuccessfully() 
-            { 
-                return DocumentText.Contains("Google"); 
+            {
+                return DocumentTitle.Contains("Google");
             }
 
             public GoogleTranslateWebsite()
@@ -32,32 +32,27 @@ namespace TextExtractorAndTranslator
                 Navigate("https://translate.google.com/?hl=ar&sl=en&tl=ar&op=translate");
             }
 
+            HtmlElement toTranslateTextarea = null;
             public void setToTranslate(string text)
             {
 
                 theWord = text;
+                
                 if (!isloadSuccessfully())
                     return;
-                HtmlElementCollection textareas = Document.GetElementsByTagName("textarea");
-                if (textareas.Count <= 0)
-                    return;
+                
+                if(toTranslateTextarea == null)
+                {
+                    HtmlElementCollection textareas = Document.GetElementsByTagName("textarea");
+                    if (textareas.Count <= 0)
+                        return;
 
-                for(int i = 0; i < textareas.Count; i++)
-                    if (textareas[i].GetAttribute("className") == "er8xn")
-                        textareas[i].InnerText = text.Trim();
-            }
+                    for (int i = 0; i < textareas.Count; i++)
+                        if (textareas[i].GetAttribute("className") == "er8xn")
+                            toTranslateTextarea = textareas[i];
+                }
+                toTranslateTextarea.InnerText = text.Trim();
 
-            public string getToTranslate()
-            {
-                if (!isloadSuccessfully())
-                    return "";
-                HtmlElementCollection textareas = Document.GetElementsByTagName("textarea");
-                if (textareas.Count <= 0)
-                    return "";
-                for (int i = 0; i < textareas.Count; i++)
-                    if (textareas[i].GetAttribute("className") == "er8xn")
-                        return (textareas[i].InnerText ?? "").Trim();
-                return "";
             }
 
             public string getMeaning()
@@ -66,6 +61,7 @@ namespace TextExtractorAndTranslator
                     return getMeaningFromDatabase(theWord);
 
                 HtmlElementCollection allSpans = Document.GetElementsByTagName("span");
+                
 
                 List<HtmlElement> meaning = new List<HtmlElement>();
                 foreach (HtmlElement span in allSpans)
@@ -142,228 +138,251 @@ namespace TextExtractorAndTranslator
         }
 
         Dictionary<string, string> translatedWords = new Dictionary<string, string>();
-        void addToDictionary(string wordOnlineSource, string meaningOnlineSource, bool onGoogle = true, string wordOfflineSource = "", string meaningOfflineSource = "")
-        {
-            string word = (onGoogle) ? wordOnlineSource : wordOfflineSource;
-            string meaning = (onGoogle) ? meaningOnlineSource : meaningOfflineSource;
-            if ((word == "") || meaning == "")
-                return;
+        RichTextBox page = new RichTextBox();
+        RichTextBox TranslateTo = new RichTextBox();
+        GoogleTranslateWebsite website = new GoogleTranslateWebsite();
+        ToolStripProgressBar progress = new ToolStripProgressBar();
+        string theWord = "";
+        bool onGoogle = true;
+        Panel Translator = new Panel();
+        OpenFileDialog IMGFile = new OpenFileDialog();
+        OpenFileDialog PDFFile = new OpenFileDialog();
+        int fontSize = 18;
 
-            for (int i = 0; i < translatedWords.Count; i++)
-            {
-                if (word == translatedWords.ElementAt(i).Key)
-                {
-                    if (meaning.Length != translatedWords.ElementAt(i).Value.Length && onGoogle)
-                    {
-                        translatedWords.Remove(translatedWords.ElementAt(i).Key);
-                        translatedWords.Add(word, meaning);
-                    }
-                    return;
-                }
-            }
-            if(translatedWords.Count > 0)
-                if (meaning == translatedWords.ElementAt(translatedWords.Count - 1).Value)
-                {
-                    translatedWords.Add(word, getMeaningFromDatabase(word));
-                    return;
-                }
-            translatedWords.Add(word, meaning);
-        }
 
         private void Form1_Load(object sender, EventArgs e)
         {
             WindowState = FormWindowState.Maximized;
-
-            string theWord = "";
-            int fontSize = 18;
 
             ToolStripContainer toolStripContainer = new ToolStripContainer();
             toolStripContainer.Dock = DockStyle.Fill;
             MenuStrip menuStrip = new MenuStrip();
             this.Controls.Add(toolStripContainer);
 
-            ToolStripProgressBar progress = new ToolStripProgressBar();
             progress.Maximum = 100;
-            progress.Style = ProgressBarStyle.Blocks;
+            progress.MarqueeAnimationSpeed = 5;
             toolStripContainer.TopToolStripPanel.Controls.Add(menuStrip);
             progress.Alignment = ToolStripItemAlignment.Left;
             progress.AutoSize = false;
             progress.Width = 614;
             progress.Height = 20;
 
-            Panel Translator = new Panel();
             Translator.Width = Screen.PrimaryScreen.Bounds.Width / 2;
             toolStripContainer.ContentPanel.Controls.Add(Translator);
             Translator.Dock = DockStyle.Right;
 
-            GoogleTranslateWebsite website = new GoogleTranslateWebsite();
             website.Dock = DockStyle.Fill;
 
-            RichTextBox TranslateTo = new RichTextBox();
             TranslateTo.Dock = DockStyle.Fill;
             TranslateTo.RightToLeft = RightToLeft.Yes;
             TranslateTo.ReadOnly = true;
             TranslateTo.BackColor = Color.White;
             TranslateTo.Font = new Font("Arial", fontSize);
-
             Translator.Controls.Add(website);
-            bool onGoogle = true;
 
-            RichTextBox page = new RichTextBox();
             toolStripContainer.ContentPanel.Controls.Add(page);
             page.Font = new Font("Arial", fontSize);
             page.Dock = DockStyle.Left;
             page.Width = Screen.PrimaryScreen.Bounds.Width / 2;
-            page.MouseUp += delegate {
-
-                if (page.SelectedText.Trim() != "")
-                {
-                    theWord = page.SelectedText.Trim();
-                    if (onGoogle)
-                        website.setToTranslate(page.SelectedText.Trim());
-                    else
-                        TranslateTo.Text = getMeaningFromDatabase(theWord);
-                }
-                progress.Value = 0;
-            };
-            page.MouseDown += delegate
-            {
-                if(theWord != "")
-                    addToDictionary(website.getToTranslate(), website.getMeaning(), onGoogle, theWord, getMeaningFromDatabase(theWord));
-            };
+            page.MouseUp += setWordToTranslate;
+            page.MouseDown += addToDictionary;
 
             ToolStripItem offline = new ToolStripMenuItem("Offline");
             offline.Alignment = ToolStripItemAlignment.Right;
-            offline.Click += delegate
-            {
-                if (theWord != "")
-                    addToDictionary(website.getToTranslate(), website.getMeaning(), onGoogle, theWord, getMeaningFromDatabase(theWord));
-                if (onGoogle)
-                {
-                Translator.Controls.Remove(website);
-                Translator.Controls.Add(TranslateTo);
-                }
-                onGoogle = false;
-
-            };
+            offline.Click += addToDictionary;
+            offline.Click += switchFromAndToOflineOrOnline;
             menuStrip.Items.Add(offline);
 
             ToolStripItem google = new ToolStripMenuItem("Google");
             google.Alignment = ToolStripItemAlignment.Right;
-            google.Click += delegate
-            {
-                if (theWord != "")
-                    addToDictionary(website.getToTranslate(), website.getMeaning(), onGoogle, theWord, getMeaningFromDatabase(theWord));
-                if (!onGoogle)
-                {
-                Translator.Controls.Remove(TranslateTo);
-                Translator.Controls.Add(website);
-                }
-                onGoogle = true;
-            };
+            google.Click += addToDictionary;
+            google.Click += switchFromAndToOflineOrOnline;
             menuStrip.Items.Add(google);
 
             ToolStripItem fromPDF = new ToolStripMenuItem("extract from PDF");
             menuStrip.Items.Add(fromPDF);
-            OpenFileDialog PDFFile = new OpenFileDialog();
-            fromPDF.Click += delegate
-            {
-                    progress.Value = 20;
-                    PDFFile.Filter = "PDF Files| *.pdf";
-                    if (PDFFile.ShowDialog() == DialogResult.OK)
-                    {
-                        try
-                        {
-                            page.Text = extractPDFText(PDFFile.FileName);
-                            progress.Value = 100;
-                        }
-                        catch (Exception ex)
-                        {
-
-                            MessageBox.Show(ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                            progress.Value = 0;
-                        }
-                    }
-                    else
-                        progress.Value = 0;
-            };
+            fromPDF.Click += extractFromPDF;
 
             ToolStripItem fromIMG = new ToolStripMenuItem("extract from Image");
             menuStrip.Items.Add(fromIMG);
-            OpenFileDialog IMGFile = new OpenFileDialog();
-            fromIMG.Click += delegate
-            {
-                    progress.Value = 20;
-                    if (IMGFile.ShowDialog() == DialogResult.OK)
-                    {
-                        try
-                        {
-                            page.Text = extractIMGText(IMGFile.FileName);
-                            progress.Value = 100;
-                        }
-                        catch (Exception ex)
-                        {
-                            MessageBox.Show(ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                            progress.Value = 0;
-                        }
-                    }
-                    else
-                        progress.Value = 0;
-            };
+            fromIMG.Click += extractFromIMG;
 
             ToolStripItem minus = new ToolStripMenuItem("-");
             menuStrip.Items.Add(minus);
-            minus.Click += delegate
-            {
-                if (fontSize > 8)
-                {
-                    page.Font = new Font("Arial", --fontSize);
-                    TranslateTo.Font = new Font("Arial", fontSize);
-                }
-            };
+            minus.Click += fontSizeDecrement;
 
             ToolStripItem plus = new ToolStripMenuItem("+");
             menuStrip.Items.Add(plus);
-            plus.Click += delegate
-            {
-                if (fontSize < 72)
-                {
-                    page.Font = new Font("Arial", ++fontSize);
-                    TranslateTo.Font = new Font("Arial", fontSize);
-                }
-            };
+            plus.Click += fontSizeIncrement;
 
             menuStrip.Items.Add(progress);
 
-            FormClosing += delegate
+            FormClosing += addToDictionary;
+            FormClosing += FormClosingEvent;
+        }
+
+        private void fontSizeIncrement(object sender, EventArgs e)
+        {
+            if (fontSize < 72)
             {
-                if (theWord != "")
-                    addToDictionary(website.getToTranslate(), website.getMeaning(), onGoogle, theWord, getMeaningFromDatabase(theWord));
+                page.Font = new Font("Arial", ++fontSize);
+                TranslateTo.Font = new Font("Arial", fontSize);
+            }
+        }
 
-                string Data = "";
-                foreach (KeyValuePair<string, string> entry in translatedWords)
+        private void fontSizeDecrement(object sender, EventArgs e)
+        {
+            if (fontSize > 8)
+            {
+                page.Font = new Font("Arial", --fontSize);
+                TranslateTo.Font = new Font("Arial", fontSize);
+            }
+        }
+
+        private async void extractFromPDF(object sender, EventArgs e)
+        {
+            ToolStripMenuItem button = (ToolStripMenuItem)sender;
+            PDFFile.Filter = "PDF Files| *.pdf";
+            if (PDFFile.ShowDialog() == DialogResult.OK)
+            {
+                try
                 {
-                    Data += entry.Key + "\n";
-                    Data += entry.Value + "\n\n";
+                    for(int i = 0; i < button.Owner.Items.Count; i++)
+                        if(button.Owner.Items[i].Text.Contains("extract"))
+                            button.Owner.Items[i].Enabled = false;
+                    progress.Style = ProgressBarStyle.Marquee;
+                    page.Text = await Task.Run(() => extractPDFText(PDFFile.FileName));
                 }
-
-                if (Data != "")
+                catch (Exception ex)
                 {
-                    SaveFileDialog saveFile = new SaveFileDialog();
-                    saveFile.InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
-                    saveFile.FileName = "Untitled.txt";
-                    saveFile.CreatePrompt = false;
-                    string savePath = "";
-                    if (saveFile.ShowDialog() == DialogResult.OK)
+
+                    progress.Style = ProgressBarStyle.Blocks;
+                    MessageBox.Show(ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+                finally
+                {
+                    for (int i = 0; i < button.Owner.Items.Count; i++)
+                        if (button.Owner.Items[i].Text.Contains("extract"))
+                            button.Owner.Items[i].Enabled = true;
+                    progress.Style = ProgressBarStyle.Blocks;
+                }
+            }
+            
+        }
+
+        private async void extractFromIMG(object sender, EventArgs e)
+        {
+            ToolStripMenuItem button = (ToolStripMenuItem)sender;
+            if (IMGFile.ShowDialog() == DialogResult.OK)
+            {
+                try
+                {
+                    for (int i = 0; i < button.Owner.Items.Count; i++)
+                        if (button.Owner.Items[i].Text.Contains("extract"))
+                            button.Owner.Items[i].Enabled = false;
+                    progress.Style = ProgressBarStyle.Marquee;
+                    page.Text = await Task.Run(() => extractIMGText(IMGFile.FileName));
+                }
+                catch (Exception ex)
+                {
+                    progress.Style = ProgressBarStyle.Blocks;
+                    MessageBox.Show(ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+                finally
+                {
+                    for (int i = 0; i < button.Owner.Items.Count; i++)
+                        if (button.Owner.Items[i].Text.Contains("extract"))
+                            button.Owner.Items[i].Enabled = true;
+                    progress.Style = ProgressBarStyle.Blocks;
+                }
+            }
+        }
+
+        private void FormClosingEvent(object sender, FormClosingEventArgs e)
+        {
+          
+
+            string Data = "";
+            foreach (KeyValuePair<string, string> entry in translatedWords)
+            {
+                Data += entry.Key + "\n";
+                Data += entry.Value + "\n\n";
+            }
+
+            if (Data != "")
+            {
+                SaveFileDialog saveFile = new SaveFileDialog();
+                saveFile.InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+                saveFile.FileName = "Untitled.txt";
+                saveFile.CreatePrompt = false;
+                string savePath = "";
+                if (saveFile.ShowDialog() == DialogResult.OK)
+                {
+                    savePath = saveFile.FileName;
+                    if (Path.GetExtension(saveFile.FileName).ToLower() != ".txt")
+                        savePath += ".txt";
+                    using (StreamWriter wordsList = new StreamWriter(savePath))
+                        wordsList.WriteLine(Data);
+                }
+            }
+        }
+
+        private void switchFromAndToOflineOrOnline(object sender, EventArgs e)
+        {
+            if (onGoogle)
+            {
+                Translator.Controls.Remove(website);
+                Translator.Controls.Add(TranslateTo);
+                onGoogle = false;
+            }
+            else
+            {
+                Translator.Controls.Remove(TranslateTo);
+                Translator.Controls.Add(website);
+                onGoogle = true;
+            }
+        }
+
+        private void addToDictionary(object sender, object e)
+        {
+            string word = theWord;
+            if (word != "")
+            {
+                string meaning = (onGoogle) ? website.getMeaning() : getMeaningFromDatabase(word);
+
+                for (int i = 0; i < translatedWords.Count; i++)
+                {
+                    if (word == translatedWords.ElementAt(i).Key)
                     {
-                        savePath = saveFile.FileName;
-                        if (Path.GetExtension(saveFile.FileName).ToLower() != ".txt")
-                            savePath += ".txt";
-                        using (StreamWriter wordsList = new StreamWriter(savePath))
-                            wordsList.WriteLine(Data);
+                        if (meaning.Length != translatedWords.ElementAt(i).Value.Length && onGoogle)
+                        {
+                            translatedWords.Remove(translatedWords.ElementAt(i).Key);
+                            translatedWords.Add(word, meaning);
+                        }
+                        return;
                     }
                 }
-            };
+                if (translatedWords.Count > 0)
+                    if (meaning == translatedWords.ElementAt(translatedWords.Count - 1).Value)
+                    {
+                        translatedWords.Add(word, getMeaningFromDatabase(word));
+                        return;
+                    }
+                translatedWords.Add(word, meaning);
+            }
+        }
+
+        private void setWordToTranslate(object sender, MouseEventArgs e)
+        {
+            RichTextBox page = (RichTextBox)sender;
+            if (page.SelectedText.Trim() != "")
+            {
+                theWord = page.SelectedText.Trim();
+                if (onGoogle)
+                    website.setToTranslate(page.SelectedText.Trim());
+                else
+                    TranslateTo.Text = getMeaningFromDatabase(theWord);
+            }
         }
     }
 }
