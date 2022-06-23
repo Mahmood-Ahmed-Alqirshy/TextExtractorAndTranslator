@@ -88,9 +88,9 @@ namespace TextExtractorAndTranslator
             }
         }
 
-        string extractPDFText(string PDFPath)
+        string[] extractPDFText(string PDFPath)
         {
-            StringBuilder sb = new StringBuilder();
+            List<string> pages = new List<string>();
             using (iTextSharp.text.pdf.PdfReader reader = new iTextSharp.text.pdf.PdfReader(PDFPath))
             {
                 for (int pageNo = 1; pageNo <= reader.NumberOfPages; pageNo++)
@@ -98,18 +98,25 @@ namespace TextExtractorAndTranslator
                     iTextSharp.text.pdf.parser.ITextExtractionStrategy strategy = new iTextSharp.text.pdf.parser.SimpleTextExtractionStrategy();
                     string text = iTextSharp.text.pdf.parser.PdfTextExtractor.GetTextFromPage(reader, pageNo, strategy);
                     text = Encoding.UTF8.GetString(ASCIIEncoding.Convert(Encoding.Default, Encoding.UTF8, Encoding.Default.GetBytes(text)));
-                    sb.Append(text);
+                    pages.Add(text);
                 }
             }
-            return sb.ToString();
+            return pages.ToArray();
         }
 
-        string extractIMGText(string IMGPath)
+        object extractIMGText(string IMGPath)
         {
-            using (var api = Patagames.Ocr.OcrApi.Create())
+            try
             {
-                api.Init(Patagames.Ocr.Enums.Languages.English);
-                return api.GetTextFromImage(IMGPath);
+                using (var api = Patagames.Ocr.OcrApi.Create())
+                {
+                    api.Init(Patagames.Ocr.Enums.Languages.English);
+                    return new { success = true, contant = api.GetTextFromImage(IMGPath) };
+                }
+            }
+            catch (Exception ex)
+            {
+                return new { success = false,  contant = ex.Message };
             }
         }
 
@@ -148,6 +155,11 @@ namespace TextExtractorAndTranslator
         OpenFileDialog IMGFile = new OpenFileDialog();
         OpenFileDialog PDFFile = new OpenFileDialog();
         int fontSize = 18;
+        ToolStripItem previousPage = new ToolStripMenuItem("<");
+        ToolStripTextBox pageNumber = new ToolStripTextBox();
+        ToolStripItem nextPage = new ToolStripMenuItem(">");
+        string[] pages;
+        int currentPage = 0;
 
 
         private void Form1_Load(object sender, EventArgs e)
@@ -156,16 +168,17 @@ namespace TextExtractorAndTranslator
 
             ToolStripContainer toolStripContainer = new ToolStripContainer();
             toolStripContainer.Dock = DockStyle.Fill;
-            MenuStrip menuStrip = new MenuStrip();
+            MenuStrip topMenuStrip = new MenuStrip();
+            MenuStrip bottomMenuStrip = new MenuStrip();
             this.Controls.Add(toolStripContainer);
 
             progress.Maximum = 100;
             progress.MarqueeAnimationSpeed = 5;
-            toolStripContainer.TopToolStripPanel.Controls.Add(menuStrip);
-            progress.Alignment = ToolStripItemAlignment.Left;
+            toolStripContainer.TopToolStripPanel.Controls.Add(topMenuStrip);
+            toolStripContainer.BottomToolStripPanel.Controls.Add(bottomMenuStrip);
+            progress.Alignment = ToolStripItemAlignment.Right;
             progress.AutoSize = false;
-            progress.Width = 614;
-            progress.Height = 20;
+            progress.Width = 700;
 
             Translator.Width = Screen.PrimaryScreen.Bounds.Width / 2;
             toolStripContainer.ContentPanel.Controls.Add(Translator);
@@ -187,38 +200,110 @@ namespace TextExtractorAndTranslator
             page.MouseUp += setWordToTranslate;
             page.MouseDown += addToDictionary;
 
+            ToolStripItem minus = new ToolStripMenuItem("-");
+            bottomMenuStrip.Items.Add(minus);
+            minus.AutoSize = false;
+            minus.Width = 100;
+            minus.Height = 30;
+            minus.Font = new Font("Arial", 10);
+            minus.Click += fontSizeDecrement;
+
+            ToolStripItem plus = new ToolStripMenuItem("+");
+            bottomMenuStrip.Items.Add(plus);
+            plus.AutoSize = false;
+            plus.Width = 100;
+            plus.Height = 30;
+            plus.Font = new Font("Arial", 10);
+            plus.Click += fontSizeIncrement;
+  
+            bottomMenuStrip.Items.Add(previousPage);
+            previousPage.Enabled = false;
+            previousPage.AutoSize = false;
+            previousPage.Width = 200;
+            previousPage.Height = 30;
+            previousPage.Font = new Font("Arial", 10);
+            previousPage.Click += goToPreviousPage;
+
+            bottomMenuStrip.Items.Add(pageNumber);
+            pageNumber.Enabled = false;
+            pageNumber.TextBox.TextAlign = HorizontalAlignment.Center;
+            pageNumber.Leave += pageNumberLeave;
+            pageNumber.KeyDown += pageNumberEnterd;
+
+            bottomMenuStrip.Items.Add(nextPage);
+            nextPage.Enabled = false;
+            nextPage.AutoSize = false;
+            nextPage.Width = 200;
+            nextPage.Height = 30;
+            nextPage.Font = new Font("Arial", 10);
+            nextPage.Click += goToNextPage;
+
+
             ToolStripItem offline = new ToolStripMenuItem("Offline");
             offline.Alignment = ToolStripItemAlignment.Right;
             offline.Click += addToDictionary;
             offline.Click += switchFromAndToOflineOrOnline;
-            menuStrip.Items.Add(offline);
+            topMenuStrip.Items.Add(offline);
 
             ToolStripItem google = new ToolStripMenuItem("Google");
             google.Alignment = ToolStripItemAlignment.Right;
             google.Click += addToDictionary;
             google.Click += switchFromAndToOflineOrOnline;
-            menuStrip.Items.Add(google);
+            topMenuStrip.Items.Add(google);
 
             ToolStripItem fromPDF = new ToolStripMenuItem("extract from PDF");
-            menuStrip.Items.Add(fromPDF);
+            topMenuStrip.Items.Add(fromPDF);
             fromPDF.Click += extractFromPDF;
 
             ToolStripItem fromIMG = new ToolStripMenuItem("extract from Image");
-            menuStrip.Items.Add(fromIMG);
+            topMenuStrip.Items.Add(fromIMG);
             fromIMG.Click += extractFromIMG;
 
-            ToolStripItem minus = new ToolStripMenuItem("-");
-            menuStrip.Items.Add(minus);
-            minus.Click += fontSizeDecrement;
-
-            ToolStripItem plus = new ToolStripMenuItem("+");
-            menuStrip.Items.Add(plus);
-            plus.Click += fontSizeIncrement;
-
-            menuStrip.Items.Add(progress);
+            bottomMenuStrip.Items.Add(progress);
+            progress.Height = 20;
 
             FormClosing += addToDictionary;
             FormClosing += FormClosingEvent;
+        }
+
+        private void pageNumberEnterd(object sender, KeyEventArgs e)
+        {
+            if (e.KeyCode == Keys.Enter)
+                pageNumberLeave(sender, e);
+        }
+
+        private void pageNumberLeave(object sender, EventArgs e)
+        {
+                ToolStripTextBox textBox = (ToolStripTextBox)sender;
+                string input = "0" + string.Join("", textBox.TextBox.Text.ToCharArray().Where((c) => char.IsDigit(c)).ToArray());
+
+                if (Convert.ToInt32(input) < 1)
+                    currentPage = 1;
+                else if (Convert.ToInt32(input) > pages.Length)
+                    currentPage = pages.Length;
+                else
+                    currentPage = Convert.ToInt32(input);
+
+                page.Text = pages[currentPage - 1];
+                textBox.TextBox.Text = currentPage.ToString();
+        }
+
+        private void goToNextPage(object sender, EventArgs e)
+        {
+            if (currentPage < pages.Length)
+            {
+                page.Text = pages[++currentPage - 1];
+                pageNumber.Text = currentPage.ToString();
+            }
+        }
+
+        private void goToPreviousPage(object sender, EventArgs e)
+        {
+            if(currentPage > 1)
+            {
+                page.Text = pages[--currentPage - 1];
+                pageNumber.Text = currentPage.ToString();
+            }
         }
 
         private void fontSizeIncrement(object sender, EventArgs e)
@@ -251,7 +336,12 @@ namespace TextExtractorAndTranslator
                         if(button.Owner.Items[i].Text.Contains("extract"))
                             button.Owner.Items[i].Enabled = false;
                     progress.Style = ProgressBarStyle.Marquee;
-                    page.Text = await Task.Run(() => extractPDFText(PDFFile.FileName));
+                    pages = await Task.Run(() => extractPDFText(PDFFile.FileName));
+                    page.Text = pages[0];
+                    currentPage = 1;
+                    pageNumber.Text = currentPage.ToString();
+                    if (pages.Length > 1)
+                        previousPage.Enabled = pageNumber.Enabled = nextPage.Enabled = true;
                 }
                 catch (Exception ex)
                 {
@@ -281,7 +371,13 @@ namespace TextExtractorAndTranslator
                         if (button.Owner.Items[i].Text.Contains("extract"))
                             button.Owner.Items[i].Enabled = false;
                     progress.Style = ProgressBarStyle.Marquee;
-                    page.Text = await Task.Run(() => extractIMGText(IMGFile.FileName));
+                    dynamic respond = await Task.Run(() => extractIMGText(IMGFile.FileName));
+                    if (!respond.success)
+                        throw new Exception(respond.contant);
+                    page.Text = respond.contant;
+                    previousPage.Enabled = pageNumber.Enabled = nextPage.Enabled = false;
+                    currentPage = 0;
+                    pageNumber.Text = "";
                 }
                 catch (Exception ex)
                 {
@@ -374,12 +470,12 @@ namespace TextExtractorAndTranslator
 
         private void setWordToTranslate(object sender, MouseEventArgs e)
         {
-            RichTextBox page = (RichTextBox)sender;
+            //RichTextBox page = (RichTextBox)sender;
             if (page.SelectedText.Trim() != "")
             {
-                theWord = page.SelectedText.Trim();
+                theWord = page.SelectedText.Replace("\n", " ").Replace("  ", " ").Trim();
                 if (onGoogle)
-                    website.setToTranslate(page.SelectedText.Trim());
+                    website.setToTranslate(page.SelectedText.Replace("\n", " ").Replace("  ", " ").Trim());
                 else
                     TranslateTo.Text = getMeaningFromDatabase(theWord);
             }
