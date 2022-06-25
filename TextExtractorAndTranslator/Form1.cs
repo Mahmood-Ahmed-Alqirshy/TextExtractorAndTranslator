@@ -8,6 +8,7 @@ using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using System.IO;
+using System.Data.SQLite;
 
 namespace TextExtractorAndTranslator
 {
@@ -58,7 +59,7 @@ namespace TextExtractorAndTranslator
             public string getMeaning()
             {
                 if (!isloadSuccessfully())
-                    return getMeaningFromDatabase(theWord);
+                    return "";
 
                 HtmlElementCollection allSpans = Document.GetElementsByTagName("span");
                 
@@ -69,78 +70,148 @@ namespace TextExtractorAndTranslator
                         meaning.Add(span);
                 
                 if (meaning.Count <= 0)
-                    return getMeaningFromDatabase(theWord);
+                    return "";
 
                 string data = "";
                 foreach (HtmlElement mean in meaning)
                     data += mean.InnerText + ",";
 
-                if (data.Length > 0)
-                {
-                    string result = "";
-                    string[] words = data.Remove(data.Length - 1).Split(',').Distinct().ToArray();
-                    for (int i = 0; i < words.Length; i++)
-                        result += (i == 0) ? words[i] + ((words.Length > 1) ? ".\n" : ".") : (i == words.Length - 1) ? words[i] + "." : words[i] + ", ";
-                    return result;
-                }
-                else
+                if (!(data.Length > 0))
                     return "";
+                
+                string result = "";
+                string[] words = data.Remove(data.Length - 1).Split(',').Distinct().ToArray();
+                for (int i = 0; i < words.Length; i++)
+                    result += (i == 0) ? words[i] + ((words.Length > 1) ? ".\n" : ".") : (i == words.Length - 1) ? words[i] + "." : words[i] + ", ";
+                return result;
+                
+                
             }
         }
 
-        string[] extractPDFText(string PDFPath)
+        class Respond
         {
-            List<string> pages = new List<string>();
-            using (iTextSharp.text.pdf.PdfReader reader = new iTextSharp.text.pdf.PdfReader(PDFPath))
+            public Respond(bool success,string[] content)
             {
-                for (int pageNo = 1; pageNo <= reader.NumberOfPages; pageNo++)
-                {
-                    iTextSharp.text.pdf.parser.ITextExtractionStrategy strategy = new iTextSharp.text.pdf.parser.SimpleTextExtractionStrategy();
-                    string text = iTextSharp.text.pdf.parser.PdfTextExtractor.GetTextFromPage(reader, pageNo, strategy);
-                    text = Encoding.UTF8.GetString(ASCIIEncoding.Convert(Encoding.Default, Encoding.UTF8, Encoding.Default.GetBytes(text)));
-                    pages.Add(text);
-                }
+                this.success = success;
+                this.content = content;
             }
-            return pages.ToArray();
+            public string[] content;
+            public bool success;
         }
 
-        object extractIMGText(string IMGPath)
+        Respond extractPDFText(string PDFPath)
+        {
+            try
+            {
+                List<string> pages = new List<string>();
+                using (iTextSharp.text.pdf.PdfReader reader = new iTextSharp.text.pdf.PdfReader(PDFPath))
+                {
+                    for (int pageNo = 1; pageNo <= reader.NumberOfPages; pageNo++)
+                    {
+                        iTextSharp.text.pdf.parser.ITextExtractionStrategy strategy = new iTextSharp.text.pdf.parser.SimpleTextExtractionStrategy();
+                        string text = iTextSharp.text.pdf.parser.PdfTextExtractor.GetTextFromPage(reader, pageNo, strategy);
+                        text = Encoding.UTF8.GetString(ASCIIEncoding.Convert(Encoding.Default, Encoding.UTF8, Encoding.Default.GetBytes(text)));
+                        pages.Add(text);
+                    }
+                }
+                return new Respond(true, pages.ToArray());
+            }
+            catch(Exception ex)
+            {
+                return new Respond(false, new string[] { ex.Message });
+            }
+        }
+
+        Respond extractIMGText(string IMGPath)
         {
             try
             {
                 using (var api = Patagames.Ocr.OcrApi.Create())
                 {
                     api.Init(Patagames.Ocr.Enums.Languages.English);
-                    return new { success = true, contant = api.GetTextFromImage(IMGPath) };
+                    return new Respond(true, new string[] { api.GetTextFromImage(IMGPath) } ); 
                 }
             }
             catch (Exception ex)
             {
-                return new { success = false,  contant = ex.Message };
+                return new Respond(false, new string[] { ex.Message } ); 
             }
         }
 
-        static string getMeaningFromDatabase(string word)
+        static class Offline
         {
-            string modifiyWord = "";
-            for (int i = 0; i < word.Length; i++)
-                modifiyWord += (i == 0) ? word[i].ToString().ToUpper() : word[i].ToString().ToLower();
-            using (System.Data.SQLite.SQLiteConnection connection = new System.Data.SQLite.SQLiteConnection("Data Source=data.sqlite"))
+            public static async Task<string> getMeaning(string word)
             {
-                connection.Open();
-                var command = connection.CreateCommand();
-                command.CommandText = $"SELECT * FROM 'engAraDictionary' WHERE eng = \"{modifiyWord}\";";
-
-                using (System.Data.SQLite.SQLiteDataReader reader = command.ExecuteReader())
+                string result = "";
+                List<string> translatedWords = new List<string>();
+                string[] wordWithSynonyms = await getWordWithSynonyms(word);
+                foreach(string item in wordWithSynonyms)
                 {
-                    if (reader.HasRows)
-                    {
-                        reader.Read();
-                        return reader.GetString(2);
-                    }
-                    else
-                        return "Not found you have to connect to the internet";
+                    string wordMeaning = await getMeaningFromDatabases(item);
+                    if (wordMeaning.Length > 0)
+                        translatedWords.Add(wordMeaning);
                 }
+                if (!(translatedWords.Count > 0))
+                    return "Not found you have to connect to the internet";
+
+                string[] words = translatedWords.Distinct().ToArray();
+                for (int i = 0; i < words.Length; i++)
+                    result += (i == 0) ? words[i] + ((words.Length > 1) ? ".\n" : ".") : (i == words.Length - 1) ? words[i] + "." : words[i] + ", ";
+                return result;
+            }
+
+            private static async Task<string> getMeaningFromDatabases(string word)
+            {
+                string modifiyWord = "";
+                for (int i = 0; i < word.Length; i++)
+                    modifiyWord += (i == 0) ? word[i].ToString().ToUpper() : word[i].ToString().ToLower();
+                
+                using (SQLiteConnection connection = new SQLiteConnection("Data Source=data.sqlite"))
+                {
+                    connection.Open();
+                    var command = connection.CreateCommand();
+                    command.CommandText = $"SELECT * FROM 'engAraDictionary' WHERE eng = \"{modifiyWord}\";";
+
+                    using (SQLiteDataReader reader = await Task.Run(() => command.ExecuteReader()))
+                    {
+                        if (reader.HasRows)
+                        {
+                            reader.Read();
+                            return reader.GetString(2);
+                        }
+                        else
+                            return "";
+                    }
+                }
+            }
+
+            private static async Task<string[]> getWordWithSynonyms(string word)
+            {
+                List<string> result = new List<string>();
+                result.Add(word);
+
+                string modifiyWord = "";
+                for (int i = 0; i < word.Length; i++)
+                    modifiyWord += word[i].ToString().ToLower();
+
+                using (SQLiteConnection connection = new SQLiteConnection("Data Source=synonyms.sqlite"))
+                {
+                    connection.Open();
+                    var command = connection.CreateCommand();
+                    command.CommandText = $"SELECT * FROM 'synonyms' WHERE word = \"{modifiyWord}\";";
+
+                    using (SQLiteDataReader reader = await Task.Run(() => command.ExecuteReader()))
+                    {
+                        if (reader.HasRows)
+                            while (reader.Read())
+                                if (reader.GetString(3).Length > 0)
+                                    result.AddRange(reader.GetString(3).Split(','));
+                        
+                    }
+                }
+                return result.Distinct().ToArray();
+                
             }
         }
 
@@ -150,6 +221,7 @@ namespace TextExtractorAndTranslator
         GoogleTranslateWebsite website = new GoogleTranslateWebsite();
         ToolStripProgressBar progress = new ToolStripProgressBar();
         string theWord = "";
+        string offlineMeaning = "";
         bool onGoogle = true;
         Panel Translator = new Panel();
         OpenFileDialog IMGFile = new OpenFileDialog();
@@ -239,15 +311,13 @@ namespace TextExtractorAndTranslator
             nextPage.Click += goToNextPage;
 
 
-            ToolStripItem offline = new ToolStripMenuItem("Offline");
+            ToolStripItem offline = new ToolStripMenuItem("Offline (Arabic)");
             offline.Alignment = ToolStripItemAlignment.Right;
-            offline.Click += addToDictionary;
             offline.Click += switchFromAndToOflineOrOnline;
             topMenuStrip.Items.Add(offline);
 
             ToolStripItem google = new ToolStripMenuItem("Google");
             google.Alignment = ToolStripItemAlignment.Right;
-            google.Click += addToDictionary;
             google.Click += switchFromAndToOflineOrOnline;
             topMenuStrip.Items.Add(google);
 
@@ -262,7 +332,6 @@ namespace TextExtractorAndTranslator
             bottomMenuStrip.Items.Add(progress);
             progress.Height = 20;
 
-            FormClosing += addToDictionary;
             FormClosing += FormClosingEvent;
         }
 
@@ -336,7 +405,10 @@ namespace TextExtractorAndTranslator
                         if(button.Owner.Items[i].Text.Contains("extract"))
                             button.Owner.Items[i].Enabled = false;
                     progress.Style = ProgressBarStyle.Marquee;
-                    pages = await Task.Run(() => extractPDFText(PDFFile.FileName));
+                    Respond respond = await Task.Run(() => extractPDFText(PDFFile.FileName)); 
+                    if(!respond.success)
+                        throw new Exception(respond.content[0]);
+                    pages = respond.content;
                     page.Text = pages[0];
                     currentPage = 1;
                     pageNumber.Text = currentPage.ToString();
@@ -345,7 +417,6 @@ namespace TextExtractorAndTranslator
                 }
                 catch (Exception ex)
                 {
-
                     progress.Style = ProgressBarStyle.Blocks;
                     MessageBox.Show(ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 }
@@ -371,10 +442,10 @@ namespace TextExtractorAndTranslator
                         if (button.Owner.Items[i].Text.Contains("extract"))
                             button.Owner.Items[i].Enabled = false;
                     progress.Style = ProgressBarStyle.Marquee;
-                    dynamic respond = await Task.Run(() => extractIMGText(IMGFile.FileName));
+                    Respond respond = await Task.Run(() => extractIMGText(IMGFile.FileName));
                     if (!respond.success)
-                        throw new Exception(respond.contant);
-                    page.Text = respond.contant;
+                        throw new Exception(respond.content[0]);
+                    page.Text = respond.content[0];
                     previousPage.Enabled = pageNumber.Enabled = nextPage.Enabled = false;
                     currentPage = 0;
                     pageNumber.Text = "";
@@ -396,7 +467,7 @@ namespace TextExtractorAndTranslator
 
         private void FormClosingEvent(object sender, FormClosingEventArgs e)
         {
-          
+            addToDictionary(sender, e);
 
             string Data = "";
             foreach (KeyValuePair<string, string> entry in translatedWords)
@@ -425,6 +496,7 @@ namespace TextExtractorAndTranslator
 
         private void switchFromAndToOflineOrOnline(object sender, EventArgs e)
         {
+            addToDictionary(sender, e);
             if (onGoogle)
             {
                 Translator.Controls.Remove(website);
@@ -442,42 +514,62 @@ namespace TextExtractorAndTranslator
         private void addToDictionary(object sender, object e)
         {
             string word = theWord;
-            if (word != "")
+            theWord = "";
+            if (word == "")
+                return;
+            
+            string meaning = "";
+            if (offlineMeaning != "")
             {
-                string meaning = (onGoogle) ? website.getMeaning() : getMeaningFromDatabase(word);
-
-                for (int i = 0; i < translatedWords.Count; i++)
-                {
-                    if (word == translatedWords.ElementAt(i).Key)
-                    {
-                        if (meaning.Length != translatedWords.ElementAt(i).Value.Length && onGoogle)
-                        {
-                            translatedWords.Remove(translatedWords.ElementAt(i).Key);
-                            translatedWords.Add(word, meaning);
-                        }
-                        return;
-                    }
-                }
-                if (translatedWords.Count > 0)
-                    if (meaning == translatedWords.ElementAt(translatedWords.Count - 1).Value)
-                    {
-                        translatedWords.Add(word, getMeaningFromDatabase(word));
-                        return;
-                    }
-                translatedWords.Add(word, meaning);
+                meaning = offlineMeaning + "\n|Offline|";
+                offlineMeaning = "";
             }
+            else
+                meaning = website.getMeaning() + "\n|Online|";
+            
+            if (meaning == "")
+                return;
+
+            for (int i = 0; i < translatedWords.Count; i++)
+            {
+                if (word == translatedWords.ElementAt(i).Key)
+                {
+                    bool justTheNewIsOnline = meaning.Contains("Online") && !translatedWords.ElementAt(i).Value.Contains("Online");
+                    bool bothIsOnline = meaning.Contains("Online") && translatedWords.ElementAt(i).Value.Contains("Online");
+                    bool theNewIsLonger = meaning.Length > translatedWords.ElementAt(i).Value.Length;
+
+                    if (justTheNewIsOnline || (bothIsOnline && theNewIsLonger) )
+                    {
+                        translatedWords.Remove(translatedWords.ElementAt(i).Key);
+                        translatedWords.Add(word, meaning);
+                    }
+                    return;
+                }
+            }
+
+            if (translatedWords.Count > 0)
+                if (meaning == translatedWords.ElementAt(translatedWords.Count - 1).Value)
+                    return;
+                
+
+            translatedWords.Add(word, meaning);
+            
         }
 
-        private void setWordToTranslate(object sender, MouseEventArgs e)
+        private async void setWordToTranslate(object sender, MouseEventArgs e)
         {
-            //RichTextBox page = (RichTextBox)sender;
             if (page.SelectedText.Trim() != "")
             {
                 theWord = page.SelectedText.Replace("\n", " ").Replace("  ", " ").Trim();
                 if (onGoogle)
                     website.setToTranslate(page.SelectedText.Replace("\n", " ").Replace("  ", " ").Trim());
                 else
-                    TranslateTo.Text = getMeaningFromDatabase(theWord);
+                {
+                    TranslateTo.Text = "جار البحث...";
+                    offlineMeaning = await Offline.getMeaning(theWord);
+                    TranslateTo.Text = offlineMeaning; 
+                    addToDictionary(sender, e);
+                }
             }
         }
     }
